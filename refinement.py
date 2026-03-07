@@ -104,10 +104,18 @@ def process_file(file_path: Path):
         f_out.write("")
         
     # 分块处理并写入
+    main_title = ""
     for i, chunk in enumerate(chunks, 1):
         print(f"  正在请求 chunk {i}/{len(chunks)}...")
+        
+        current_system_prompt = SYSTEM_PROMPT
+        if i == 1:
+            current_system_prompt += f"\n\n请注意：这是整篇文章（共{len(chunks)}块）的第1块。请确保你的输出的第一行必须是这篇文章的大标题（以 `# ` 开头），然后再继续正文或小标题。"
+        else:
+            current_system_prompt += f"\n\n请注意：这是整篇文章（共{len(chunks)}块）的第{i}块。整篇文章的大标题是「{main_title}」。请直接继续正文的整理，只能输出以 `## ` 及以上数量的 `#` 开头的小标题，不要再输出大标题。"
+
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": current_system_prompt},
             {"role": "user", "content": chunk}
         ]
         
@@ -122,14 +130,29 @@ def process_file(file_path: Path):
             
             with open(out_file, "a", encoding="utf-8") as f_out:
                 if i > 1:
-                    f_out.write("\n\n-------------------------------\n\n")  # chunk之间增加分割区或换行
+                    f_out.write("\n\n")  # chunk之间增加分割区或换行
+                
+                first_line_buffer = ""
+                found_first_line = False
                 
                 for chunk_resp in response:
                     if chunk_resp.choices and chunk_resp.choices[0].delta.content:
                         text_delta = chunk_resp.choices[0].delta.content
+                        
+                        if i == 1 and not found_first_line:
+                            first_line_buffer += text_delta
+                            # 使用 lstrip() 避免被开头的空换行干扰，一旦积累的内容包含有效的换行符即可提取
+                            if "\n" in first_line_buffer.lstrip():
+                                first_line = first_line_buffer.strip().split("\n")[0]
+                                main_title = first_line.lstrip("#").strip()
+                                found_first_line = True
+                                
                         f_out.write(text_delta)
                         f_out.flush()
                         print(text_delta, end="", flush=True)
+                
+                if i == 1 and not found_first_line and first_line_buffer.strip():
+                    main_title = first_line_buffer.strip().lstrip("#").strip()
             print("\n  [chunk 完成]")
         except Exception as e:
             print(f"\n请求出错 chunk {i}: {e}")
